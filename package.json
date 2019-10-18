@@ -18,5 +18,10 @@
   "bugs": {
     "url": "https://github.com/rights-s/node-mc_protocol/issues"
   },
-  "homepage": "https://github.com/rights-s/node-mc_protocol#readme"
+  "homepage": "https://github.com/rights-s/node-mc_protocol#readme",
+  "dependencies": {
+    "dotenv": "^8.2.0",
+    "log4js": "^5.2.2",
+    "net": "^1.0.2"
+  }
 }
