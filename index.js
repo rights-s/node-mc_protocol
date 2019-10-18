@@ -1,27 +1,41 @@
-const net = require('net');
 const logger = require('./lib/logger.js');
+const Frame3eClient = require('./lib/frame3e_client.js');
 
-const plcHost = process.env.PLC_HOST;
-const plcPort = process.env.PLC_PORT;
+class McProtocol {
+  constructor(host, port) {
+    logger.debug(`${host}:${port} connecting...`);
 
-logger.debug(`${plcHost}:${plcPort} connecting...`);
+    this.client = new Frame3eClient(host, port);
+  }
 
-var client = new net.Socket();
+  getWord(address, count) {
+    logger.debug(`get words: ${address}`);
+  }
 
-client.connect(plcPort, plcHost, () => {
-  console.log('connected');
-});
+  setWord(address, values=[0]) {
+    logger.debug(`set words: ${address} - ${values}`);
+  }
 
-client.on('data', (data) => {
-  console.log(data);
-});
+  open() {
+    this.client.open();
+  }
 
-client.on('close', (data) => {
-  console.log('closed');
-});
+  close() {
+    this.client.close();
+  }
+}
 
-client.on('error', (error) => {
-  console.error(error);
-});
+module.exports = McProtocol;
 
-console.log(1);
+let a = new McProtocol('192.168.1.210', '3000');
+a.getWord('D2000');
+a.setWord('D2000', [10, 10, 30]);
+
+setTimeout(() => {
+  a.close();
+
+  setTimeout(() => {
+    a.open();
+  }, 1000);
+}, 1000);
+
