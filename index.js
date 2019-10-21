@@ -6,14 +6,20 @@ class McProtocolClient {
   constructor(host, port) {
     this._host = host;
     this._port = port;
+    this._pcNo = 0xff;
+    this._networkNo = 0x00;
+    this._unitIoNo = [0xff, 0x03];
+    this._unitStationNo = 0x00;
+
     this._isOpened = false;
     this.socket = new net.Socket();
-    this.receivedCallback = null;
+    this.receivedSuccessCallback = null;
+    this.receivedFailureCallback = null;
 
     this.socket.on('data', (_data) => {
-      logger.debug("received");
+      logger.info("Event: received");
 
-      if (!this.receivedCallback) return;
+      if (!this.receivedSuccessCallback) return;
 
       // サブヘッダ | 通信経路                 | 応答データ長 | 終了コード | 応答データ...
       // 0xd0 0x00  | 0x00 0xff 0xff 0x03 0x00 | 0x04 0x00    | 0x00 0x00  | 0x0a 0x00 ...
@@ -23,8 +29,10 @@ class McProtocolClient {
       let dataLength = _data.readInt16LE(7, 2);
       let returnCode = _data.readInt16LE(9, 2);
 
-      // TODO: 終了コード対応
+      logger.debug(`<< ${_data.toString('hex').toUpperCase()}`);
+
       if (returnCode != 0) {
+        return this.receivedFailureCallback('0x' + returnCode.toString(16));
       }
 
       let data = [];
@@ -33,20 +41,20 @@ class McProtocolClient {
         data.push(_data.readInt16LE(i, 2));
       }
 
-      this.receivedCallback(data);
+      this.receivedSuccessCallback(data);
     });
 
     this.socket.on('connect', () => {
-      logger.debug('connected');
+      logger.info("Event: connected");
       this._isOpened = true;
     });
 
     this.socket.on('close', (data) => {
-      logger.debug('closed');
+      logger.info("Event: closed");
     });
 
     this.socket.on('error', (error) => {
-      logger.debug(error);
+      logger.error(error);
     });
   }
 
@@ -70,25 +78,25 @@ class McProtocolClient {
     return this._isOpened;
   }
 
-  async getWords(address, count) {
-    logger.debug(`get words: ${address} - ${count} count`);
+  async getWords(deviceName, count) {
+    logger.debug(`get words: ${deviceName} - ${count} count`);
 
-    // 3E
-    // let buffer = new Buffer.from([0x50, 0x00, 0x00, 0xff, 0xff, 0x03, 0x00, 0x0c, 0x00, 0x10, 0x00, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa8, 0x01, 0x00]);
-    // logger.debug(buffer);
-
-    let buffer = new Buffer.from(this._build_get_words_message(address, count));
-    logger.debug(buffer);
+    let buffer = new Buffer.from(this._buildGetWordsMessage(deviceName, count));
+    logger.debug(`>> ${buffer.toString('hex').toUpperCase()}`);
 
     this.socket.write(buffer);
 
     return new Promise(async (resolve, reject) => {
       setTimeout(() => {
         reject(new Error("timeout"));
-      }, 1000);
+      }, 2000);
 
-      this.receivedCallback = (data) => {
-        resolve(data);
+      this.receivedSuccessCallback = (values) => {
+        resolve(values);
+      };
+
+      this.receivedFailureCallback = (code) => {
+        reject(new Error(`Code: ${code}`));
       };
     });
   }
@@ -98,60 +106,102 @@ class McProtocolClient {
     return value[0];
   }
 
-  async setWord(address, values=[0]) {
-    logger.debug(`set words: ${address} - ${values}`);
+  async setWords(deviceName, values=[]) {
+    logger.debug(`set words: ${deviceName} - ${values}`);
+
+    let buffer = new Buffer.from(this._buildSetWordsMessage(deviceName, values));
+    logger.debug(`>> ${buffer.toString('hex').toUpperCase()}`);
+
+    this.socket.write(buffer);
+
+    return new Promise(async (resolve, reject) => {
+      setTimeout(() => {
+        reject(new Error("timeout"));
+      }, 2000);
+
+      this.receivedSuccessCallback = (values) => {
+        resolve(values);
+      };
+
+      this.receivedFailureCallback = (code) => {
+        reject(new Error(`Code: ${code}`));
+      };
+    });
+  }
+
+  async setWord(deviceName, value) {
+    return this.setWords(deviceName, [value]);
   }
 
   async timeout(msec) {
     return new Promise((_, reject) => setTimeout(reject, msec));
   }
 
-  _build_get_words_message(deviceName, count) {
-    let m1 = this._build_get_words_message_monitoring_timer();
-    let m2 = this._build_get_words_message_request_data(deviceName, count);
+  // ワードアドレス読込メッセージ
+  _buildGetWordsMessage(deviceName, count) {
+    let m1 = this._buildMonitoringTimerMessage();
+    let m2 = this._buildGetWordsRequestDataMessage(deviceName, count);
 
     let message = [].concat(
-      this._build_get_words_message_sub_header(),
-      this._build_get_words_message_access_route(),
-      this._build_get_words_message_data_length(m1, m2),
+      this._buildSubHeaderMessage(),
+      this._buildAccessRouteMessage(),
+      this._buildDataLengthMessage(m1, m2),
       m1,
       m2,
     );
 
-    console.log(message);
+    return message;
+  }
+
+  // ワードアドレス書込メッセージ
+  _buildSetWordsMessage(deviceName, values) {
+    let m1 = this._buildMonitoringTimerMessage();
+    let m2 = this._buildSetWordsRequestDataMessage(deviceName, values);
+
+    let message = [].concat(
+      this._buildSubHeaderMessage(),
+      this._buildAccessRouteMessage(),
+      this._buildDataLengthMessage(m1, m2),
+      m1,
+      m2,
+    );
 
     return message;
   }
 
-  _build_get_words_message_sub_header() {
+  // メッセージ - サブヘッダ
+  _buildSubHeaderMessage() {
     // | 要求電文  |
     // | 0x50 0x00 |
     return [0x50, 0x00];
   }
 
-  // アクセス経路
-  _build_get_words_message_access_route() {
+  // メッセージ - アクセス経路
+  _buildAccessRouteMessage() {
     // | ネットワーク番号 | PC番号 | 要求先ユニットI/O番号 | 要求先ユニット局番号 |
     // | 0x00             | 0xff   | 0xff 0x03             | 0x00                 |
 
-    let network_no      = [0x00];       // ネットワーク番号      アクセス先のネットワークNo.を指定します。
-    let pc_no           = [0xff];       // PC番号                アクセス先のネットワークユニットの局番を指定します。
-    let unit_io_no      = [0xff, 0x03]; // 要求先ユニットI/O番号 マルチドロップ接続局にアクセスする場合に，マルチドロップ接続元ユニットの先頭入 出力番号を指定します。
-                                        // マルチCPUシステム，二重化システムのCPUユニットを指定します。
-    let unit_station_no = [0x00];       // 要求先ユニット局番号  マルチドロップ接続局にアクセスする場合に，アクセス先ユニットの局番を指定します。
+    let networkNo     = [this._networkNo];      // ネットワーク番号      アクセス先のネットワークNo.を指定します。
+    let pcNo          = [this._pcNo];           // PC番号                アクセス先のネットワークユニットの局番を指定します。
+    let unitIoNo      = this._unitIoNo;         // 要求先ユニットI/O番号 マルチドロップ接続局にアクセスする場合に，マルチドロップ接続元ユニットの先頭入 出力番号を指定します。
+                                                // マルチCPUシステム，二重化システムのCPUユニットを指定します。
+    let unitStationNo = [this._unitStationNo];  // 要求先ユニット局番号  マルチドロップ接続局にアクセスする場合に，アクセス先ユニットの局番を指定します。
 
-    return network_no.concat(pc_no, unit_io_no, unit_station_no);
+    return [].concat(networkNo, pcNo, unitIoNo, unitStationNo);
   }
 
-  _build_get_words_message_data_length(m1, m2) {
+  // メッセージ - 要求データ長
+  _buildDataLengthMessage(m1, m2) {
     // | 要求データ長 |
     // | 0x0c 0x00    | (12 byte)
-    let buf = Buffer.alloc(2);
-    buf.writeUInt16LE(m1.length + m2.length, 0);
-    return Array.prototype.slice.call(buf, 0);
+    let buffer = Buffer.alloc(2);
+    buffer.writeUInt16LE(m1.length + m2.length, 0);
+
+    return Array.prototype.slice.call(buffer, 0);
   }
 
-  _build_get_words_message_monitoring_timer() {
+  // メッセージ - 監視タイマ
+  _buildMonitoringTimerMessage() {
     // | 監視タイマー |
     // | 0x10, 0x00   | (16 x 250ms = 4s)
 
@@ -163,7 +213,8 @@ class McProtocolClient {
     return [0x10, 0x00];
   }
 
-  _build_get_words_message_request_data(device_name, count) {
+  // メッセージ - ワードアドレス読込 要求データ
+  _buildGetWordsRequestDataMessage(deviceName, count) {
     // | デバイス番号   | デバイスコード |
     // | 0x64 0x00 0x00 | 0xa8           |
 
@@ -172,37 +223,71 @@ class McProtocolClient {
     // バイナリコード時は，デバイス番号を16進数に変換します。"1234"(10進) => "4D2"(16進)
 
     let command     = [0x01, 0x04];
-    let sub_command = [0x00, 0x00]; // TODO: iQ-Rシリーズは0002かもしれない
+    let subCommand  = [0x00, 0x00]; // TODO: iQ-Rシリーズは0002かもしれない
 
     let messages = [].concat(
       command,
-      sub_command,
-      this._build_get_words_message_request_data_device_name(device_name),
-      this._build_get_words_message_request_data_device_count(count),
+      subCommand,
+      this._buildRequestDataDeviceCodeMessage(deviceName),
+      this._buildRequestDataDeviceCountMessage(count),
     );
 
     return messages
   }
 
-  _build_get_words_message_request_data_device_name(device_name) {
+  // メッセージ - ワードアドレス書込 要求データ
+  _buildSetWordsRequestDataMessage(deviceName, values) {
+    // | デバイス番号   | デバイスコード |
+    // | 0x64 0x00 0x00 | 0xa8           |
+
+    // デバイス番号 3byte
+    // 内部リレー (M)1234の場合(デバイス番号が10進数のデバイスの場合)
+    // バイナリコード時は，デバイス番号を16進数に変換します。"1234"(10進) => "4D2"(16進)
+
+    let command     = [0x01, 0x14];
+    let subCommand  = [0x00, 0x00]; // TODO: iQ-Rシリーズは0002かもしれない
+
+    let _values = [];
+    values.forEach((value) => {
+      let buffer = Buffer.alloc(2);
+      // TODO: 負の値動作確認
+      buffer.writeInt16LE(value, 0);
+      _values = _values.concat(Array.prototype.slice.call(buffer, 0));
+    });
+
+    let messages = [].concat(
+      command,
+      subCommand,
+      this._buildRequestDataDeviceCodeMessage(deviceName),
+      this._buildRequestDataDeviceCountMessage(values.length),
+      _values,
+    );
+
+    return messages
+  }
+
+  // メッセージ - デバイスコード
+  _buildRequestDataDeviceCodeMessage(deviceName) {
     // レジスタ判定
-    if (device_name.match(/(^D)(\d+$)/)) {
+    if (deviceName.match(/(^D)(\d+$)/)) {
       // Dレジスタ
-      let result = device_name.match(/(^D)(\d+$)/);
-      let register_name = result[1];
-      let register_no   = parseInt(result[2]);
+      let result        = deviceName.match(/(^D)(\d+$)/);
+      let registerName  = result[1];
+      let registerNo    = parseInt(result[2]);
 
-      let buf = Buffer.alloc(3);
-      buf.writeUInt16LE(register_no, 0);
-      let arr = Array.prototype.slice.call(buf, 0);
+      let buffer = Buffer.alloc(3);
+      buffer.writeUInt16LE(registerNo, 0);
+      let bufferArray = Array.prototype.slice.call(buffer, 0);
 
-      return arr.concat([0xa8]);
+      return bufferArray.concat([0xa8]);
+
     } else {
       // TODO: 未対応
     }
   }
 
-  _build_get_words_message_request_data_device_count(count) {
+  // メッセージ - デバイス点数
+  _buildRequestDataDeviceCountMessage(count) {
     let buffer = Buffer.alloc(2);
     buffer.writeUInt16LE(count, 0);
 
@@ -212,53 +297,38 @@ class McProtocolClient {
 
 module.exports = McProtocolClient;
 
-//a.getWord('D2000');
-//a.setWord('D2000', [10, 10, 30]);
-//
-//console.log(new Buffer('20'));
-//console.log(new Buffer('20', 'hex'));
-/*
-let buf = Buffer.alloc(2);
-buf.writeUInt16LE(2, 0);
-let arr = Array.prototype.slice.call(buf, 0);
-
-
-console.log(buf);
-console.log(arr);
-
-logger.debug("D320".match(/(^D)(\d+$)/));
-logger.debug("D0".match(/^D\d+$/));
-logger.debug("DA0".match(/^D\d+$/));
-logger.debug("AD0".match(/^D\d+$/));
-logger.debug("DAF".match(/^D\d+$/));
-logger.debug("D999999".match(/^D\d+$/));
-return;
-*/
-
 let c = async () => {
-  let mcProtocolClient  = new McProtocolClient('192.168.1.210', '3000');
+  let mcProtocolClient = new McProtocolClient('192.168.1.210', '3000');
   await mcProtocolClient.open();
+
   let d0 = await mcProtocolClient.getWords('D0', 1).catch((e) => { logger.error(e); });
   logger.debug(d0);
+
   let d1 = await mcProtocolClient.getWords('D0', 14).catch((e) => { logger.error(e); });
   logger.debug(d1);
-  let d2 = await mcProtocolClient.getWords('D1000', 959).catch((e) => { logger.error(e); });
+
+  let d2 = await mcProtocolClient.getWords('D1000', 20).catch((e) => { logger.error(e); });
   logger.debug(d2);
-  let d3 = await mcProtocolClient.getWord('D7').catch((e) => { logger.error(e); });
-  logger.debug(d3);
-  //mcProtocolClient.close();
+
+  let d3 = await mcProtocolClient.setWords('D0', [1]).catch((e) => { logger.error(e); });
+
+  // let d3 = await mcProtocolClient.getWord('A7').catch((e) => {
+  //   logger.error(e);
+  // });
+
+  /*
+  let d = async() => {
+    let d2 = await mcProtocolClient.getWords('D1000', 20).catch((e) => { logger.error(e); });
+    logger.debug(d2);
+
+    setTimeout(() => {
+      d();
+    });
+  };
+  d();
+  */
+
+  // mcProtocolClient.close();
 };
 
 c();
-
-// logger.debug(a.isOpened());
-
-/*
- setTimeout(() => {
-  a.close();
-
-  setTimeout(() => {
-    a.open();
-  }, 1000);
-}, 1000);
-*/
