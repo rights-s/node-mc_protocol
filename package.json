@@ -1,5 +1,5 @@
 {
-  "name": "mc_protocol",
+  "name": "node-mc_protocol",
   "version": "0.1.0",
   "description": "mcprotocol",
   "main": "index.js",
