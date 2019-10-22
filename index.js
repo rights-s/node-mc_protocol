@@ -1,15 +1,16 @@
 const net = require('net');
 const logger = require('./lib/logger.js');
-// const Frame3eClient = require('./lib/frame3e_client.js');
 
 class McProtocolClient {
-  constructor(host, port) {
+  constructor(host, port, options = {}) {
     this._host = host;
     this._port = port;
-    this._pcNo = 0xff;
-    this._networkNo = 0x00;
-    this._unitIoNo = [0xff, 0x03];
-    this._unitStationNo = 0x00;
+    this._pcNo = options['pcNo'] || 0xff;
+    this._networkNo = options['networkNo'] || 0x00;
+    this._unitIoNo = options['unitIoNo'] || [0xff, 0x03];
+    this._unitStationNo = options['unitStationNo'] || 0x00;
+    this._protocolFrame = options['protocolFrame'] || '3E'; // Only 3E Frame
+    this._plcModel = options['plcModel'] || 'Q'; // Q or iQ-R
 
     this._isOpened = false;
     this.socket = new net.Socket();
@@ -45,7 +46,8 @@ class McProtocolClient {
     });
 
     this.socket.on('connect', () => {
-      logger.info("Event: connected");
+      logger.info('Event: connected');
+      logger.info(`PLC Model: ${this._plcModel}, Frame: ${this._protocolFrame}`);
       this._isOpened = true;
     });
 
@@ -222,17 +224,30 @@ class McProtocolClient {
     // 内部リレー (M)1234の場合(デバイス番号が10進数のデバイスの場合)
     // バイナリコード時は，デバイス番号を16進数に変換します。"1234"(10進) => "4D2"(16進)
 
-    let command     = [0x01, 0x04];
-    let subCommand  = [0x00, 0x00]; // TODO: iQ-Rシリーズは0002かもしれない
-
     let messages = [].concat(
-      command,
-      subCommand,
+      this._buildGetWordsCommand(),
+      this._buildGetWordsSubCommand(),
       this._buildRequestDataDeviceCodeMessage(deviceName),
       this._buildRequestDataDeviceCountMessage(count),
     );
 
     return messages
+  }
+
+  // メッセージ - ワード読込コマンド
+  _buildGetWordsCommand() {
+    return [0x01, 0x04];
+  }
+
+  // メッセージ - ワード読込サブコマンド
+  _buildGetWordsSubCommand() {
+    if (this._plcModel == 'Q') {
+      return [0x00, 0x00];
+
+    } else if (this._plcModel == 'iQ-R') {
+      return [0x02, 0x00];
+
+    }
   }
 
   // メッセージ - ワードアドレス書込 要求データ
@@ -266,6 +281,22 @@ class McProtocolClient {
     return messages
   }
 
+  // メッセージ - ワード書込コマンド
+  _buildSetWordsCommand() {
+    return [0x01, 0x14];
+  }
+
+  // メッセージ - ワード書込サブコマンド
+  _buildSetWordsSubCommand() {
+    if (this._plcModel == 'Q') {
+      return [0x00, 0x00];
+
+    } else if (this._plcModel == 'iQ-R') {
+      return [0x02, 0x00];
+
+    }
+  }
+
   // メッセージ - デバイスコード
   _buildRequestDataDeviceCodeMessage(deviceName) {
     // レジスタ判定
@@ -275,14 +306,40 @@ class McProtocolClient {
       let registerName  = result[1];
       let registerNo    = parseInt(result[2]);
 
-      let buffer = Buffer.alloc(3);
-      buffer.writeUInt16LE(registerNo, 0);
-      let bufferArray = Array.prototype.slice.call(buffer, 0);
+      let deviceNoBuffer = Buffer.alloc(this._lengthOfDeviceNo());
+      deviceNoBuffer.writeUInt16LE(registerNo, 0);
+      let deviceNoBufferArray = Array.prototype.slice.call(deviceNoBuffer, 0);
 
-      return bufferArray.concat([0xa8]);
+      let deviceCodeBuffer = Buffer.alloc(this._lengthOfDeviceCode());
+      deviceCodeBuffer.writeUIntLE(0xa8, 0);
+      let deviceCodeBufferArray = Array.prototype.slice.call(deviceCodeBuffer, 0);
+
+      return [].concat(deviceNoBufferArray, deviceCodeBufferArray);
 
     } else {
       // TODO: 未対応
+    }
+  }
+
+  // デバイス番号バイト数
+  _lengthOfDeviceNo() {
+    if (this._plcModel == 'Q') {
+      return 3;
+
+    } else if (this._plcModel == 'iQ-R') {
+      return 4;
+
+    }
+  }
+
+  // デバイスコードバイト数
+  _lengthOfDeviceCode() {
+    if (this._plcModel == 'Q') {
+      return 1;
+
+    } else if (this._plcModel == 'iQ-R') {
+      return 2;
+
     }
   }
 
@@ -298,7 +355,11 @@ class McProtocolClient {
 module.exports = McProtocolClient;
 
 let c = async () => {
-  let mcProtocolClient = new McProtocolClient('192.168.1.210', '3000');
+  let options = {
+    // plcModel: 'iQ-R',
+  };
+
+  let mcProtocolClient = new McProtocolClient('192.168.1.210', '3000', options);
   await mcProtocolClient.open();
 
   let d0 = await mcProtocolClient.getWords('D0', 1).catch((e) => { logger.error(e); });
