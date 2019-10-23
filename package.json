@@ -1,6 +1,6 @@
 {
   "name": "node-mc_protocol",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "mcprotocol",
   "main": "index.js",
   "scripts": {
