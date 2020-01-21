@@ -61,6 +61,9 @@ class McProtocolClient {
 
     this.socket.on('error', (error) => {
       logger.error(error);
+      if (!this.isOpened()) {
+        this.connectFailureCallback(error);
+      }
     });
   }
 
@@ -68,10 +71,14 @@ class McProtocolClient {
     if (host) this._host = host;
     if (port) this._port = port;
 
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
       this.socket.connect(this._port, this._host, () => {
         resolve(true);
       });
+
+      this.connectFailureCallback = (error) => {
+        reject(error);
+      }
     });
   }
 
