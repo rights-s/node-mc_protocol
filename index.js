@@ -6,6 +6,7 @@ class McProtocolClient {
   constructor(host, port, options = {}) {
     this._host = host;
     this._port = port;
+    this._isBusy = false;
 
     this._options = {
       pcNo: options['pcNo'] || 0xff,
@@ -53,10 +54,12 @@ class McProtocolClient {
       logger.info('Event: connected');
       logger.info(`PLC Model: ${this._options['plcModel']}, Frame: ${this._options['protocolFrame']}`);
       this._isOpened = true;
+      this._isBusy = false;
     });
 
     this.socket.on('close', (data) => {
       logger.info("Event: closed");
+      this._isBusy = false;
     });
 
     this.socket.on('error', (error) => {
@@ -85,27 +88,40 @@ class McProtocolClient {
   }
 
   async getWords(deviceName, count) {
-    logger.debug(`get words: ${deviceName} - ${count} count`);
-
-    let messageBuilder = new MessageBuilder(this._options);
-
-    let buffer = new Buffer.from(messageBuilder.getWordsMessage(deviceName, count));
-    logger.debug(`>> ${buffer.toString('hex').toUpperCase()}`);
-
-    this.socket.write(buffer);
-
     return new Promise(async (resolve, reject) => {
-      setTimeout(() => {
-        reject(new Error("timeout"));
-      }, 2000);
+      let func = () => {
+        this._isBusy = true;
 
-      this.receivedSuccessCallback = (values) => {
-        resolve(values);
+        logger.debug(`get words: ${deviceName} - ${count} count`);
+
+        let messageBuilder = new MessageBuilder(this._options);
+
+        let buffer = new Buffer.from(messageBuilder.getWordsMessage(deviceName, count));
+        logger.debug(`>> ${buffer.toString('hex').toUpperCase()}`);
+
+        this.socket.write(buffer);
+
+        setTimeout(() => {
+          this._isBusy = false;
+          reject(new Error("timeout"));
+        }, 2000);
+
+        this.receivedSuccessCallback = (values) => {
+          this._isBusy = false;
+          resolve(values);
+        };
+
+        this.receivedFailureCallback = (code) => {
+          this._isBusy = false;
+          reject(new Error(`Code: ${code}`));
+        };
       };
 
-      this.receivedFailureCallback = (code) => {
-        reject(new Error(`Code: ${code}`));
-      };
+      let id = setInterval(() => {
+        if (this._isBusy) return;
+        clearInterval(id);
+        func();
+      }, 10);
     });
   }
 
@@ -115,27 +131,40 @@ class McProtocolClient {
   }
 
   async setWords(deviceName, values=[]) {
-    logger.debug(`set words: ${deviceName} - ${values}`);
-
-    let messageBuilder = new MessageBuilder(this._options);
-
-    let buffer = new Buffer.from(messageBuilder.setWordsMessage(deviceName, values));
-    logger.debug(`>> ${buffer.toString('hex').toUpperCase()}`);
-
-    this.socket.write(buffer);
-
     return new Promise(async (resolve, reject) => {
-      setTimeout(() => {
-        reject(new Error("timeout"));
-      }, 2000);
+      let func = () => {
+        this._isBusy = true;
 
-      this.receivedSuccessCallback = (values) => {
-        resolve(values);
+        logger.debug(`set words: ${deviceName} - ${values}`);
+
+        let messageBuilder = new MessageBuilder(this._options);
+
+        let buffer = new Buffer.from(messageBuilder.setWordsMessage(deviceName, values));
+        logger.debug(`>> ${buffer.toString('hex').toUpperCase()}`);
+
+        this.socket.write(buffer);
+
+        setTimeout(() => {
+          this._isBusy = false;
+          reject(new Error("timeout"));
+        }, 2000);
+
+        this.receivedSuccessCallback = (values) => {
+          this._isBusy = false;
+          resolve(values);
+        };
+
+        this.receivedFailureCallback = (code) => {
+          this._isBusy = false;
+          reject(new Error(`Code: ${code}`));
+        };
       };
 
-      this.receivedFailureCallback = (code) => {
-        reject(new Error(`Code: ${code}`));
-      };
+      let id = setInterval(() => {
+        if (this._isBusy) return;
+        clearInterval(id);
+        func();
+      }, 10);
     });
   }
 
