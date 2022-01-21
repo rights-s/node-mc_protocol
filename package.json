@@ -21,7 +21,7 @@
   "homepage": "https://github.com/rights-s/node-mc_protocol#readme",
   "dependencies": {
     "dotenv": "^8.2.0",
-    "log4js": "^5.2.2",
+    "log4js": "^6.4.0",
     "net": "^1.0.2"
   }
 }
